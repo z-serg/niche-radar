@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# CLI-импорт локального CSV без ограничений HTTP-загрузки (ТЗ §12.2).
+# Использование: ./bin/import /absolute/path/report.csv [доп. аргументы artisan]
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [[ $# -lt 1 ]]; then
+    echo "Использование: $0 /absolute/path/report.csv [--coverage=unknown|full_top|sample|filtered] [--title=...] [--skip-invalid] [--wait]"
+    exit 1
+fi
+
+SRC=$1
+shift || true
+if [[ ! -f "$SRC" ]]; then
+    echo "Файл не найден: $SRC" >&2
+    exit 1
+fi
+
+NAME=$(basename "$SRC")
+STAGING=/var/www/html/storage/app/staging
+
+echo "Копирую файл в контейнер приложения..."
+docker compose cp "$SRC" "app:$STAGING/$NAME"
+
+echo "Запускаю импорт..."
+docker compose exec -T app php artisan niche:import "$STAGING/$NAME" --wait "$@"

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Запуск обязательных тестов в Docker (ТЗ §12.2).
+# Тесты идут в отдельной БД niche_radar_test: переменные окружения
+# контейнера принудительно перекрываются, чтобы RefreshDatabase
+# не мог затронуть рабочую базу.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+DB_NAME=$(grep -E "^DB_DATABASE=" .env | cut -d= -f2-)
+DB_USER=$(grep -E "^DB_USERNAME=" .env | cut -d= -f2-)
+TEST_DB=niche_radar_test
+
+echo "[test] подготовка тестовой БД ${TEST_DB}..."
+docker compose up -d db >/dev/null
+until docker compose exec -T db pg_isready -U "$DB_USER" >/dev/null 2>&1; do sleep 1; done
+
+docker compose exec -T db psql -U "$DB_USER" -d postgres -t -c "SELECT 1 FROM pg_database WHERE datname='${TEST_DB}'" | grep -q 1 \
+    && docker compose exec -T db psql -U "$DB_USER" -d postgres -c "DROP DATABASE ${TEST_DB} WITH (FORCE);" >/dev/null
+docker compose exec -T db psql -U "$DB_USER" -d postgres -c "CREATE DATABASE ${TEST_DB};" >/dev/null
+docker compose exec -T db psql -U "$DB_USER" -d "$TEST_DB" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" >/dev/null
+
+echo "[test] phpunit (БД: ${TEST_DB})..."
+docker compose run --rm --no-deps \
+    -e DB_CONNECTION=pgsql_testing \
+    -e DB_DATABASE=${TEST_DB} \
+    -e DB_HOST=db \
+    -e APP_ENV=testing \
+    app vendor/bin/phpunit "$@"

@@ -1,0 +1,274 @@
+openapi: 3.1.0
+info:
+  title: Niche Radar API
+  version: 1.0.0
+  description: |
+    Персональный инструмент исследования поискового спроса. Префикс /api/v1;
+    локальное приложение без аутентификации. Единая схема фильтров
+    используется UI, REST и MCP.
+servers:
+  - url: http://localhost:8080/api/v1
+tags:
+  - {name: datasets}
+  - {name: search}
+  - {name: analytics}
+  - {name: niches}
+  - {name: hypotheses}
+  - {name: exports}
+paths:
+  /datasets:
+    get: {tags: [datasets], summary: Список отчётов с состоянием импорта, responses: {"200": {description: OK}}}
+    post:
+      tags: [datasets]
+      summary: Загрузить CSV (multipart; до 5 GiB)
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: {type: string, format: binary}
+                title: {type: string}
+                coverage_type: {type: string, enum: [unknown, full_top, sample, filtered]}
+                skip_invalid: {type: boolean}
+      responses: {"201": {description: Created, content: {application/json: {schema: {type: object, properties: {dataset_id: {type: string}, existing: {type: boolean}, preview: {type: object}}}}}}}
+  /datasets/{id}:
+    get:
+      tags: [datasets]
+      summary: Метаданные, схема замеров, качество
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {"200": {description: OK}}
+    patch:
+      tags: [datasets]
+      summary: Активация/архивирование/поля
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: OK}}
+    delete:
+      tags: [datasets]
+      summary: Удаление с проверкой зависимостей (409 при зависимостях)
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: OK}, "409": {description: DATASET_HAS_DEPENDENCIES}}
+  /datasets/{id}/preview:
+    get: {tags: [datasets], summary: 'Предпросмотр: разделитель, заголовки, сопоставление, первые строки', parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+  /datasets/{id}/mapping:
+    put:
+      tags: [datasets]
+      summary: Сопоставление колонок/политика до обработки
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      requestBody: {content: {application/json: {schema: {type: object, properties: {mapping: {type: object}, policy: {type: object}, coverage_type: {type: string}}}}}}
+      responses: {"200": {description: OK}}
+  /datasets/{id}/import:
+    post: {tags: [datasets], summary: Поставить импорт в очередь, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"202": {description: Accepted}}}
+  /imports/{id}:
+    get: {tags: [datasets], summary: Прогресс импорта, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+  /imports/{id}/cancel: {post: {tags: [datasets], summary: Отмена, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}}
+  /imports/{id}/retry: {post: {tags: [datasets], summary: Повтор, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}}
+  /imports/{id}/errors:
+    get: {tags: [datasets], summary: Ошибки импорта по номерам записей, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+  /metric-runs:
+    post:
+      tags: [datasets]
+      summary: Запросить расчёт диапазона/профиля
+      requestBody: {content: {application/json: {schema: {type: object, properties: {dataset_id: {type: string}, ordinal_from: {type: integer}, ordinal_to: {type: integer}, profile: {type: object}}}}}}
+      responses: {"202": {description: Accepted}}
+  /metric-runs/{id}:
+    get: {tags: [datasets], summary: Статус прогона, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+
+  /keywords/search:
+    post:
+      tags: [search]
+      summary: Поиск фраз с курсорной пагинацией
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dataset_id]
+              properties:
+                dataset_id: {type: string, format: uuid}
+                metric_run_id: {type: string}
+                filters:
+                  type: object
+                  properties:
+                    include: {type: object, properties: {terms: {type: array, items: {type: string}}, mode: {type: string, enum: [any, all]}, match: {type: string, enum: [token, substring]}}}
+                    exclude: {type: object, properties: {terms: {type: array, items: {type: string}}, match: {type: string, enum: [token, substring]}}}
+                    exact_current: {$ref: "#/components/schemas/Range"}
+                    smoothed_growth: {$ref: "#/components/schemas/Range"}
+                    smoothed_delta: {$ref: "#/components/schemas/Range"}
+                    consistency: {$ref: "#/components/schemas/Range"}
+                    peak_retention: {$ref: "#/components/schemas/Range"}
+                    base_avg: {$ref: "#/components/schemas/Range"}
+                    word_count: {$ref: "#/components/schemas/Range"}
+                    task_score: {$ref: "#/components/schemas/Range"}
+                    preset: {type: string, enum: [sustained_growth, early_signals, zero_baseline, growth_leaders, fall_leaders]}
+                    is_new: {type: boolean}
+                    low_base: {type: boolean}
+                    history_complete: {type: boolean}
+                sort:
+                  type: array
+                  items: {type: object, properties: {field: {type: string}, direction: {type: string, enum: [asc, desc]}}}
+                limit: {type: integer, minimum: 1, maximum: 200, default: 50}
+                cursor: {type: string, nullable: true}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/KeywordRow"}}
+                  next_cursor: {type: string, nullable: true}
+                  truncated: {type: boolean}
+                  hard_limit_reached: {type: boolean}
+                  total_count: {type: integer, nullable: true}
+        "409": {description: DATASET_NOT_READY}
+  /keywords/count:
+    post: {tags: [search], summary: Точное число совпадений, responses: {"200": {description: OK}}}
+  /keywords/{id}:
+    get:
+      tags: [search]
+      summary: Карточка фразы (история, метрики, приоритет, похожие, ниши, заметки)
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}, {name: dataset_id, in: query, required: true, schema: {type: string}}]
+      responses: {"200": {description: OK}}
+  /keywords/{id}/history:
+    get: {tags: [search], summary: История наблюдений фразы, parameters: [{name: id, in: path, required: true, schema: {type: integer}}], responses: {"200": {description: OK}}}
+
+  /analytics/summary:
+    post:
+      tags: [analytics]
+      summary: Агрегаты выборки (тяжёлое → 202 + job_id)
+      responses: {"200": {description: OK}, "202": {description: Accepted}}
+  /analytics/compare:
+    post:
+      tags: [analytics]
+      summary: Сравнение двух отчётов по текущим замерам
+      requestBody: {content: {application/json: {schema: {type: object, required: [base_dataset_id, current_dataset_id], properties: {base_dataset_id: {type: string}, current_dataset_id: {type: string}, niche_id: {type: string}}}}}}
+      responses: {"200": {description: OK}, "422": {description: INCOMPATIBLE_MEASUREMENTS}}
+  /analytics/dashboard:
+    get: {tags: [analytics], summary: Обзор отчёта (лидеры, новые, пресеты), responses: {"200": {description: OK}}}
+  /jobs/{id}:
+    get: {tags: [analytics], summary: Статус/результат отложенного задания (импорт/экспорт/агрегат), parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+  /presets:
+    get:
+      tags: [search]
+      summary: Описания пресетов (пороги, сортировка по умолчанию) для заполнения фильтров UI
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        key: {type: string}
+                        title: {type: string}
+                        thresholds: {type: object, additionalProperties: true}
+                        reliability: {type: string}
+                        sort:
+                          type: array
+                          items: {type: object, properties: {field: {type: string}, direction: {type: string, enum: [asc, desc]}}}
+  /candidate-groups:
+    get:
+      tags: [analytics]
+      summary: Предложения групп с охватом исходного набора
+      parameters: [{name: dataset_id, in: query, schema: {type: string}}, {name: method, in: query, schema: {type: string, enum: [token, bigram]}}]
+      responses: {"200": {description: OK}}
+  /candidate-groups/{id}/members:
+    get:
+      tags: [analytics]
+      summary: Участники группы; expand=true — по всему отчёту («Расширить»)
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: dataset_id, in: query, required: true, schema: {type: string}}, {name: expand, in: query, schema: {type: boolean}}]
+      responses: {"200": {description: OK}}
+
+  /saved-searches:
+    get: {tags: [search], summary: Список, responses: {"200": {description: OK}}}
+    post: {tags: [search], summary: Сохранить, responses: {"201": {description: Created}}}
+  /saved-searches/{id}:
+    get: {tags: [search], summary: Просмотр, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+    patch: {tags: [search], summary: Изменить, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+    delete: {tags: [search], summary: Удалить, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+
+  /niches:
+    get: {tags: [niches], summary: Список ниш, responses: {"200": {description: OK}}}
+    post: {tags: [niches], summary: Создать (fixed/rule), responses: {"201": {description: Created}}}
+  /niches/{id}:
+    get: {tags: [niches], summary: Ниша с версиями, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+    patch: {tags: [niches], summary: Изменить, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+    delete: {tags: [niches], summary: Удалить (409 при гипотезах), parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}, "409": {description: NICHE_HAS_DEPENDENCIES}}
+  /niches/{id}/evaluate:
+    post:
+      tags: [niches]
+      summary: Новая версия состава и оценки
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      requestBody: {content: {application/json: {schema: {type: object, required: [dataset_id], properties: {dataset_id: {type: string}, metric_run_id: {type: string}}}}}}
+      responses: {"201": {description: Created}}
+  /niches/{id}/members:
+    get: {tags: [niches], summary: Участники версии состава, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+
+  /hypotheses:
+    get: {tags: [hypotheses], summary: Список по статусам, responses: {"200": {description: OK}}}
+    post: {tags: [hypotheses], summary: Создать, responses: {"201": {description: Created}}}
+  /hypotheses/{id}:
+    get: {tags: [hypotheses], summary: Гипотеза с доказательствами, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+    patch: {tags: [hypotheses], summary: Изменить, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+    delete: {tags: [hypotheses], summary: Удалить, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+  /hypotheses/{id}/evidence:
+    post: {tags: [hypotheses], summary: Добавить подтверждающую фразу с снимком значений, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"201": {description: Created}}}
+  /hypotheses/{id}/evidence/{keywordId}:
+    delete: {tags: [hypotheses], summary: Убрать доказательство, parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: keywordId, in: path, required: true, schema: {type: integer}}], responses: {"200": {description: OK}}}
+  /hypotheses/{id}/export:
+    post: {tags: [hypotheses], summary: Экспорт Markdown-карточки (фоново), parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"202": {description: Accepted}}}
+
+  /exports:
+    post:
+      tags: [exports]
+      summary: Поставить экспорт (search_csv | niche_csv | hypothesis_md)
+      requestBody: {content: {application/json: {schema: {type: object, required: [kind], properties: {kind: {type: string, enum: [search_csv, niche_csv, hypothesis_md]}, dataset_id: {type: string}, filters: {type: object}, format: {type: string, enum: [tables, raw], default: tables}, niche_version_id: {type: string}, hypothesis_id: {type: string}}}}}}
+      responses: {"202": {description: Accepted}}
+  /exports/{id}:
+    get: {tags: [exports], summary: Статус экспорта, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: OK}}}
+  /exports/{id}/download:
+    get: {tags: [exports], summary: Скачать (410 после истечения), parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {"200": {description: файл}, "410": {description: файл удалён}}}
+
+  /health:
+    get: {tags: [analytics], summary: Процесс + БД + heartbeat воркеров, responses: {"200": {description: healthy}, "503": {description: degraded}}}
+components:
+  schemas:
+    Range:
+      type: object
+      properties:
+        min: {type: number}
+        max: {type: number}
+    KeywordRow:
+      type: object
+      properties:
+        keyword_id: {type: integer}
+        phrase: {type: string}
+        exact_current: {type: integer, nullable: true}
+        broad_current: {type: integer, nullable: true}
+        rank_current: {type: integer, nullable: true}
+        rank_previous: {type: integer, nullable: true}
+        rank_delta: {type: integer, nullable: true, description: rank_previous − rank_current; NULL при rank_previous=0}
+        history:
+          type: array
+          items: {type: object, properties: {ordinal: {type: integer}, exact: {type: integer, nullable: true}, broad: {type: integer, nullable: true}}}
+        metrics:
+          type: object
+          properties:
+            base_avg: {type: number, nullable: true, description: B}
+            late_avg: {type: number, nullable: true, description: R}
+            smoothed_delta: {type: number, nullable: true, description: A}
+            smoothed_growth: {type: number, nullable: true, description: G}
+            consistency: {type: number, nullable: true, description: C}
+            peak_retention: {type: number, nullable: true, description: P}
+            task_score: {type: number, description: T}
+            priority: {type: integer, nullable: true, description: priority_v1}
+            null_reasons: {type: object, additionalProperties: {type: string}}
+        flags: {type: array, items: {type: string}}
+        algorithm_version: {type: string}

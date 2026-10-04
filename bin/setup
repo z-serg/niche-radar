@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Инициализация окружения Niche Radar (ТЗ §12.2).
+# Работает без установленных на хосте PHP, Node.js или PostgreSQL.
+# Не перезаписывает уже заданные значения; .env исключён из git.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+command -v docker >/dev/null || { echo "Ошибка: docker не установлен."; exit 1; }
+docker compose version >/dev/null 2>&1 || { echo "Ошибка: docker compose v2 недоступен."; exit 1; }
+
+ENV_FILE=.env
+EXAMPLE=.env.example
+
+if [[ ! -f "$ENV_FILE" ]]; then
+    cp "$EXAMPLE" "$ENV_FILE"
+    echo "Создан .env из примера."
+fi
+
+# Генерация значений только для пустующих ключей.
+set_env() {
+    local key=$1 value=$2
+    if grep -qE "^${key}=$" "$ENV_FILE"; then
+        sed -i "s|^${key}=$|${key}=${value}|" "$ENV_FILE"
+        echo "Установлен ${key}."
+    elif ! grep -qE "^${key}=" "$ENV_FILE"; then
+        echo "${key}=${value}" >> "$ENV_FILE"
+        echo "Добавлен ${key}."
+    else
+        echo "${key} уже задан — не изменён."
+    fi
+}
+
+gen_password() { openssl rand -hex 24; }
+
+if grep -qE "^APP_KEY=$" "$ENV_FILE"; then
+    APP_KEY=$(openssl rand -base64 32)
+    set_env APP_KEY "base64:${APP_KEY}"
+fi
+
+DB_PASS=$(grep -E "^DB_PASSWORD=" "$ENV_FILE" | cut -d= -f2-)
+if [[ -z "$DB_PASS" ]]; then
+    DB_PASS=$(gen_password)
+    set_env DB_PASSWORD "$DB_PASS"
+    set_env POSTGRES_PASSWORD "$DB_PASS"
+elif grep -qE "^POSTGRES_PASSWORD=$" "$ENV_FILE"; then
+    set_env POSTGRES_PASSWORD "$DB_PASS"
+fi
+
+echo
+echo "Готово. Дальше:"
+echo "  docker compose up -d --build"
+echo "  приложение: http://localhost:8080"

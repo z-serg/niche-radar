@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Согласованная резервная копия (ТЗ §12.2): БД (pg_dump), оригиналы CSV
+# и метаданные. На время копирования мутации останавливаются
+# (web/app/workers/scheduler), затем контейнеры возвращаются к работе.
+# Использование: ./bin/backup /absolute/path/backup-dir
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+DIR=${1:?Использование: $0 /absolute/path/backup-dir}
+mkdir -p "$DIR"
+DIR=$(cd "$DIR" && pwd)
+
+DB_NAME=$(grep -E "^DB_DATABASE=" .env | cut -d= -f2-)
+DB_USER=$(grep -E "^DB_USERNAME=" .env | cut -d= -f2-)
+
+STAMP=$(date +%Y%m%d_%H%M%S)
+
+echo "[backup] остановка мутаций (web, app, workers, scheduler)..."
+docker compose stop web app worker-import worker-default scheduler >/dev/null
+
+echo "[backup] дамп базы данных (согласованный снимок PostgreSQL)..."
+docker compose exec -T db pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner > "$DIR/db_${STAMP}.sql"
+
+echo "[backup] оригиналы и экспорты из app_storage..."
+docker compose start app >/dev/null
+sleep 2
+docker compose exec -T app tar czf - -C /var/www/html/storage/app originals > "$DIR/originals_${STAMP}.tar.gz"
+docker compose exec -T app tar czf - -C /var/www/html/storage/app exports 2>/dev/null > "$DIR/exports_${STAMP}.tar.gz" || true
+
+APP_KEY=$(grep -E "^APP_KEY=" .env | cut -d= -f2-)
+PG_VERSION=$(docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" -t -A -c "SHOW server_version;")
+{
+    echo "# Метаданные резервной копии Niche Radar ${STAMP}"
+    echo "# Секреты восстанавливаются отдельно по инструкции (docs/runbook.md);"
+    echo "# APP_KEY необходим при наличии зашифрованных данных."
+    echo "APP_KEY=${APP_KEY}"
+    echo "DB_DATABASE=${DB_NAME}"
+    echo "postgres_version=${PG_VERSION}"
+    echo "created_at=$(date -Is)"
+} > "$DIR/backup-meta_${STAMP}.env"
+
+echo "[backup] возобновление работы сервисов..."
+docker compose up -d >/dev/null
+
+echo "[backup] готово: $DIR"
+ls -la "$DIR" | grep "$STAMP"

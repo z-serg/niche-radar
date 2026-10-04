@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "niche-radar": {
+      "command": "docker",
+      "args": [
+        "compose",
+        "exec",
+        "-T",
+        "app",
+        "php",
+        "artisan",
+        "mcp:start",
+        "niche-radar"
+      ],
+      "cwd": "/absolute/path/to/Bukvariks"
+    }
+  }
+}

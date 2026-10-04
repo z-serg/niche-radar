@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Восстановление из копии (ТЗ §12.2) с подтверждением замены данных.
+# Использование: ./bin/restore /absolute/path/backup-dir
+# Текущие данные БД будут заменены; файлы оригиналов — дополнены/заменены.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+DIR=${1:?Использование: $0 /absolute/path/backup-dir}
+DIR=$(cd "$DIR" && pwd)
+
+DB_DUMP=$(ls -1 "$DIR"/db_*.sql 2>/dev/null | sort | tail -1 || true)
+ORIG=$(ls -1 "$DIR"/originals_*.tar.gz 2>/dev/null | sort | tail -1 || true)
+META=$(ls -1 "$DIR"/backup-meta_*.env 2>/dev/null | sort | tail -1 || true)
+
+[[ -n "$DB_DUMP" ]] || { echo "В $DIR нет дампа БД (db_*.sql)."; exit 1; }
+[[ -n "$ORIG" ]] || { echo "В $DIR нет архива оригиналов (originals_*.tar.gz)."; exit 1; }
+
+echo "Будет восстановлено:"
+echo "  БД:        $(basename "$DB_DUMP")"
+echo "  Оригиналы: $(basename "$ORIG")"
+echo "ВНИМАНИЕ: текущая база данных будет полностью заменена."
+read -rp "Введите YES для подтверждения: " CONFIRM
+[[ "$CONFIRM" == "YES" ]] || { echo "Отменено."; exit 1; }
+
+meta_value() { [[ -n "$META" ]] && grep -E "^$1=" "$META" | tail -1 | cut -d= -f2- || true; }
+DB_NAME=$(meta_value DB_DATABASE); DB_NAME=${DB_NAME:-$(grep -E "^DB_DATABASE=" .env | cut -d= -f2-)}
+DB_USER=$(grep -E "^DB_USERNAME=" .env | cut -d= -f2-)
+
+echo "[restore] остановка приложения (БД остаётся)..."
+docker compose stop web app worker-import worker-default scheduler migrate >/dev/null 2>&1 || true
+
+echo "[restore] очистка и пересоздание БД ${DB_NAME}..."
+docker compose exec -T db psql -U "$DB_USER" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE);" >/dev/null
+docker compose exec -T db psql -U "$DB_USER" -d postgres -c "CREATE DATABASE ${DB_NAME};" >/dev/null
+
+echo "[restore] загрузка дампа..."
+docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=0 -q -f /dev/stdin < "$DB_DUMP" >/dev/null
+docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" >/dev/null
+
+echo "[restore] оригиналы в app_storage..."
+docker compose start app >/dev/null
+sleep 2
+docker compose exec -T app sh -c "mkdir -p /var/www/html/storage/app/originals /var/www/html/storage/app/exports"
+docker compose exec -T app tar xzf - -C /var/www/html/storage/app < "$ORIG"
+
+echo "[restore] полный запуск..."
+docker compose up -d >/dev/null
+
+echo "[restore] готово. Проверка: curl -s http://localhost:8080/api/v1/health"
+if [[ -n "$META" ]]; then
+    echo "Секреты: при необходимости верните APP_KEY из $(basename "$META") в .env (docs/runbook.md)."
+fi

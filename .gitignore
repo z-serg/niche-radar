@@ -1,0 +1,32 @@
+# Данные пользователя и секреты — в git не включать (см. ТЗ §15)
+/data/
+/.env
+/backups/
+*.backup
+*.sql.gz
+
+# Laravel
+/backend/vendor/
+/backend/node_modules/
+/backend/storage/app/originals/
+/backend/storage/app/staging/
+/backend/storage/app/exports/
+/backend/storage/logs/*
+/backend/storage/framework/cache/data/*
+/backend/storage/framework/sessions/*
+/backend/storage/framework/views/*
+/backend/storage/framework/testing/*
+/backend/storage/*.key
+/backend/.env
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+
+# Прочее
+.DS_Store
+*.log
+.idea/
+.vscode/
+.agents/*
+.zcode*

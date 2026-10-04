@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Воспроизводимый контрольный прогон и отчёт (ТЗ §12.2, §13).
+# Использование: ./bin/benchmark [--rows=3000000] [--file=/path/in/container.csv]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+docker compose up -d >/dev/null
+docker compose exec -T app php artisan niche:benchmark "$@"
+
+echo
+echo "[benchmark] отчёты:"
+docker compose exec -T app sh -c 'ls -t /var/www/html/storage/app/benchmarks/ | head -4'
+LATEST=$(docker compose exec -T app sh -c 'ls -t /var/www/html/storage/app/benchmarks/*.md | head -1')
+mkdir -p ./benchmarks
+docker compose cp "app:${LATEST#}" ./benchmarks/ >/dev/null
+echo "скопирован в ./benchmarks/$(basename "$LATEST")"

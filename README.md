@@ -5,7 +5,8 @@
 продуктовые гипотезы.
 
 - Версия: 1.0 · Формат: локальное веб-приложение без аутентификации (Docker Compose)
-- Техническое задание: [niche-radar-spec.md](niche-radar-spec.md)
+- Техническое задание: [docs/niche-radar-spec.md](docs/niche-radar-spec.md)
+- Подробная инструкция по использованию: [docs/usage.md](docs/usage.md)
 
 ## Что внутри
 
@@ -18,33 +19,52 @@
 | MCP | `laravel/mcp`, локальный транспорт stdio, только чтение |
 | HTTP | Nginx: статика React + FastCGE в php-fpm; порт `127.0.0.1:8080` (настраивается) |
 
-## Быстрый старт
+## Установка и запуск
 
-Требуется только Docker (Docker Desktop или Engine + Compose v2). PHP, Node.js и
+Требуются только git и Docker (Docker Desktop или Engine + Compose v2). PHP, Node.js и
 PostgreSQL на хосте не нужны.
 
 ```bash
+git clone https://github.com/z-serg/niche-radar.git
+cd niche-radar
 ./bin/setup                 # создаёт .env: APP_KEY, пароль БД
 make up                     # сборка, запуск и открытие сайта в браузере
 ```
+
+Первый запуск собирает образы и применяет миграции — это может занять несколько минут.
+`make up` дожидается готовности приложения (опрос `/api/v1/health`) и открывает браузер.
 
 Управление стеком: `make down` (остановить), `make restart`, `make logs`, `make ps`,
 `make help` — полный список.
 
 После старта приложение доступно на `http://localhost:8080`
-(если порт занят — поменяйте `APP_PORT` в `.env`, см. ниже).
+(если порт занят — поменяйте `APP_PORT` в `.env` и выполните `make restart`;
+формат значения: `8180` или `127.0.0.1:8180`).
 Аутентификации нет: приложение локальное, вход не требуется.
+
+### Где взять данные
+
+Файлы для страницы «Данные» — CSV-отчёты популярных запросов Яндекс Wordstat.
+Скачиваются со страницы <https://www.bukvarix.com/top-keywords/> (Top-3 000 000 запросов).
+
+Тестовый образец уже включён в репозиторий: `data/Top10.csv`. Прочие CSV
+(полные отчёты, промежуточные выгрузки) в git не включаются — каталог `data/`
+игнорируется, храните их локально.
 
 ### Импорт данных
 
 Через UI («Данные» → загрузка CSV) или из терминала:
 
 ```bash
-./bin/import /absolute/path/Top3000000.csv --coverage=full_top
+./bin/import "$(pwd)/data/Top10.csv" --coverage=sample          # тестовый образец из репозитория
+./bin/import /absolute/path/Top3000000.csv --coverage=full_top  # полный отчёт с bukvarix.com
 ```
 
 Контрольные значения образца `Top10.csv` (ТЗ §4.3) проверяются автотестами:
 `./bin/test`.
+
+Подробно: рабочий цикл «импорт → исследование → ниши → гипотезы», смысл метрик
+и ограничения интерпретации — в [docs/usage.md](docs/usage.md).
 
 ### Другие команды
 
@@ -77,6 +97,8 @@ HTTP/OAuth и публичный адрес не входят в версию 1.
 
 ## Документация
 
+- [docs/usage.md](docs/usage.md) — подробная инструкция по использованию: импорт, исследование, ниши, гипотезы
+- [docs/niche-radar-spec.md](docs/niche-radar-spec.md) — техническое задание (источник истины по требованиям)
 - [docs/openapi.yaml](docs/openapi.yaml) — REST API (OpenAPI 3)
 - [docs/data-model.md](docs/data-model.md) — схема данных, формулы метрик, обработка пропусков
 - [docs/runbook.md](docs/runbook.md) — эксплуатация: обновление, бэкапы, восстановление, секреты
@@ -90,8 +112,8 @@ backend/    Laravel: API, импорт, метрики, MCP, тесты
 frontend/   React SPA (Vite, Tailwind)
 docker/     Dockerfile-ы (php-fpm, nginx), конфиги, init.sql
 bin/        setup / import / backup / restore / test / benchmark
-docs/       OpenAPI, схема данных, runbook, MCP
-data/       Пользовательские CSV — в git НЕ включаются
+docs/       ТЗ, OpenAPI, схема данных, runbook, инструкция по использованию, MCP
+data/       CSV-отчёты пользователя; в git включён только образец Top10.csv
 ```
 
 ## Ограничения источника (важно для интерпретации)
